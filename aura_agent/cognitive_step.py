@@ -48,25 +48,26 @@ async def perform_cognitive_step(user_command: str | None = None):
     # 2. Planning Pass
     user_input_section = f"### High-Priority User Command:\n{user_command}\n\n" if user_command else ""
     
-    # --- MODIFIED: Improved prompt with explicit tool signatures and guidance ---
+    # --- MODIFIED: Final prompt polish ---
     planning_prompt = (
         f"{user_input_section}"
         "### Constitution:\n"
         f"{constitution_content}\n\n"
         "### Current Task Queue (JSON):\n"
         f"```json\n{task_queue_json_content}\n```\n\n"
+        "--- Standard Operating Procedures (SOPs) ---\n"
+        "1.  **User Interaction:** If the user asks a question, your final action MUST be to use `answer_user` to respond directly.\n"
+        "2.  **Task Management:** To update a task, first `read_task_queue`, construct the *entire new list of tasks*, then call `update_task_queue` with the complete list.\n"
+        "3.  **File Creation:** To create a file, use `write_file`. Do NOT `read_file` first if you know the file doesn't exist.\n\n"
         "--- INSTRUCTIONS ---\n"
-        "Analyze the context. Prioritize the user command. Your goal is to make progress on the highest priority task.\n"
-        "**Your Available Tools (API Reference):**\n"
-        "- `list_files(path: str)`: Lists files in a directory. Use `.` for the vault root.\n"
-        "- `read_file(path: str)`: Reads a file's content.\n"
-        "- `write_file(path: str, content: str, overwrite: bool = False)`: Writes content to a file.\n"
-        "- `search_code(query: str)`: Searches the agent's source code.\n"
-        "- `update_task_queue(tasks: List[dict])`: Updates the entire task list.\n"
-        "- `write_journal(content: str)`: Writes a log to your journal.\n\n"
-        "**Best Practices:**\n"
-        "- To write a file with complex content (e.g., from your journal), first use `read_file` to get the content, then use `write_file` with that content. Do NOT generate large file contents directly in the `tool_args_json`.\n"
-        "- Do not try to access system root (`/`). Use relative paths or `.` for the vault root.\n\n"
+        "Analyze the context and follow the SOPs. Prioritize the user command. Your available tools are:\n"
+        "- `answer_user(answer: str)`\n"
+        "- `list_files(path: str)`: Use `.` for the vault root, or `aura_agent` for the code root.\n"
+        "- `read_file(path: str)`\n"
+        "- `write_file(path: str, content: str, overwrite: bool = False)`\n"
+        "- `search_code(query: str)`\n"
+        "- `update_task_queue(tasks: List[dict])`\n"
+        "- `write_journal(content: str)`\n\n"
         "Determine the single best tool call to execute now. Output ONLY the JSON for the `NextAction`."
     )
 
@@ -103,32 +104,34 @@ async def perform_cognitive_step(user_command: str | None = None):
     print(f"<<< Execution Result: {execution_result}")
     
     # 4. Task Update
-    print(">>> Task Update Pass: Reflecting on action taken...")
-    task_update_prompt = (
-        "### Original Task Queue (JSON):\n"
-        f"```json\n{task_queue_json_content}\n```\n\n"
-        f"### Action Taken: `{action_to_take.tool_name}` with args `{action_to_take.tool_args_json}`\n"
-        f"### Action Result:\n{execution_result}\n\n"
-        "--- INSTRUCTIONS ---\n"
-        "Based on the action's result, update the task list. If a task is done, mark it 'done'. "
-        "Return a JSON object where `tasks_json` is a JSON-formatted *string* of the *entire*, updated list."
-    )
-
-    task_update_result = await Runner.run(task_updater_agent, task_update_prompt, run_config=run_config, max_turns=2)
-    
-    task_update_log_entry = ""
-    if not isinstance(task_update_result.final_output, TaskQueue):
-        task_update_log_entry = f"Task Update Failed: Updater agent did not return a valid TaskQueue object. Result: {task_update_result.final_output}"
-        print(f"ERROR: {task_update_log_entry}")
+    if action_to_take.tool_name == 'answer_user':
+        task_update_log_entry = "No task update needed; answered user directly."
+        print(f"<<< {task_update_log_entry}")
     else:
-        try:
-            updated_tasks_list = json.loads(task_update_result.final_output.tasks_json)
-            update_status = raw_tool_functions['update_task_queue'](updated_tasks_list)
-            task_update_log_entry = f"Task queue updated. Status: {update_status}"
-            print(f"<<< {task_update_log_entry}")
-        except Exception as e:
-            task_update_log_entry = f"Task Update Failed: Could not process updater response. Error: {e}. Raw: {task_update_result.final_output.tasks_json}"
-            print(f"ERROR: {task_update_log_entry}")
+        print(">>> Task Update Pass: Reflecting on action taken...")
+        task_update_prompt = (
+            "### Original Task Queue (JSON):\n"
+            f"```json\n{task_queue_json_content}\n```\n\n"
+            f"### Action Taken: `{action_to_take.tool_name}` with args `{action_to_take.tool_args_json}`\n"
+            f"### Action Result:\n{execution_result}\n\n"
+            "--- INSTRUCTIONS ---\n"
+            "Based on the action's result, update the task list. If a task is done, mark it 'done'. "
+            "Return a JSON object where `tasks_json` is a JSON-formatted *string* of the *entire*, updated list."
+        )
+
+        task_update_result = await Runner.run(task_updater_agent, task_update_prompt, run_config=run_config, max_turns=2)
+        
+        if not isinstance(task_update_result.final_output, TaskQueue):
+            task_update_log_entry = f"Task Update Failed: Updater agent did not return valid TaskQueue object. Result: {task_update_result.final_output}"
+        else:
+            try:
+                updated_tasks_list = json.loads(task_update_result.final_output.tasks_json)
+                update_status = raw_tool_functions['update_task_queue'](updated_tasks_list)
+                task_update_log_entry = f"Task queue updated. Status: {update_status}"
+            except Exception as e:
+                task_update_log_entry = f"Task Update Failed: Could not process updater response. Error: {e}"
+        
+        print(f"<<< {task_update_log_entry}")
 
     # 5. Journaling Step
     journal_entry = (
