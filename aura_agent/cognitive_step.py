@@ -1,17 +1,34 @@
 # aura_agent/cognitive_step.py
 
 import json
+import os
 import asyncio
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Literal
 from agents import Agent, Runner, RunConfig, AgentOutputSchema
 from agents.extensions.models.litellm_model import LitellmModel
 from . import config
 from .task import Task, NextAction, TaskQueue
-from .agentic_layer import raw_tool_functions, _write_journal_func
+from .agentic_layer import raw_tool_functions
 
 # --- Agent Definitions ---
+@dataclass
+class Reflection:
+    decision: Literal["PROCEED_WITH_TASK", "INTERRUPT_FOR_LEARNING"]
+    reasoning: str
+
+reflector_agent = Agent(
+    name="AURA-Reflector",
+    instructions=(
+        "You are the reflection module for AURA. Your job is to analyze the agent's most recent journal entry and decide if it contains a significant, novel lesson that needs to be processed into long-term knowledge. "
+        "A 'lesson' is typically marked with 'LESSON LEARNED' or describes a failure and a fix. A routine action log (e.g., 'I listed files') is not a lesson. "
+        "Your output MUST be a JSON object matching the Reflection schema."
+    ),
+    tools=[], model=LitellmModel(model=config.GEMINI_FLASH_MODEL, api_key=config.API_KEY),
+    output_type=AgentOutputSchema(Reflection, strict_json_schema=True),
+)
+
 planner_agent = Agent(
     name="AURA-Planner",
     instructions=(
@@ -22,69 +39,79 @@ planner_agent = Agent(
     output_type=AgentOutputSchema(NextAction, strict_json_schema=False),
 )
 
-@dataclass
-class TaskUpdate:
-    updated_tasks: List[Dict[str, Any]] = field(default_factory=list)
-
 task_updater_agent = Agent(
     name="AURA-TaskUpdater",
     instructions=(
         "You are the task management module. Update the task list based on the last action's result. "
-        "If the action completes a task, mark it 'done'. Your output MUST be a JSON object "
-        "where `tasks_json` is a JSON-formatted *string* of the *entire*, updated list."
+        "Your output MUST be a JSON object where `tasks_json` contains a JSON-formatted *string* of the *entire*, updated list."
     ),
     tools=[], model=LitellmModel(model=config.GEMINI_FLASH_MODEL, api_key=config.API_KEY),
     output_type=AgentOutputSchema(TaskQueue, strict_json_schema=True),
 )
 
 async def perform_cognitive_step(user_command: str | None = None):
-    # 1. Read core state
-    constitution_content = raw_tool_functions['read_file']("0-Core/Constitution.md")
-    tools_content = raw_tool_functions['read_file']("0-Core/Tools.md")
-    task_queue_json_content = raw_tool_functions['read_task_queue']()
-
-    if "Error:" in constitution_content:
-        raise RuntimeError(f"CRITICAL: Could not read Constitution: {constitution_content}")
-    if "Error:" in tools_content:
-        raise RuntimeError(f"CRITICAL: Could not read Tools.md: {tools_content}")
-
-    # 2. Planning Pass
-    user_input_section = f"### High-Priority User Command:\n{user_command}\n\n" if user_command else ""
-    
-    planning_prompt = (
-        f"{user_input_section}"
-        "### Constitution:\n"
-        f"{constitution_content}\n\n"
-        "### Current Task Queue (JSON):\n"
-        f"```json\n{task_queue_json_content}\n```\n\n"
-        "--- Standard Operating Procedures (SOPs) ---\n"
-        "1.  **User Interaction:** If the user asks a question, your final action MUST be to use `answer_user` to respond directly.\n"
-        "2.  **Task Management:** To update a task, first `read_task_queue`, construct the *entire new list of tasks*, then call `update_task_queue` with the complete list.\n"
-        "3.  **File Operations:** To create a file, use `write_file`. Do NOT `read_file` first if you know the file doesn't exist. Use the exact argument names provided.\n\n"
-        "--- AVAILABLE TOOLS ---\n"
-        "You have the following tools. You MUST use the exact `tool_name` and the exact argument names specified in the function signatures.\n"
-        "```markdown\n"
-        f"{tools_content}\n"
-        "```\n\n"
-        "--- INSTRUCTIONS ---\n"
-        "Analyze the context and follow the SOPs. Prioritize the user command. Determine the single best tool call to execute now. "
-        "Output ONLY the JSON for the `NextAction`, ensuring `tool_args_json` is a valid JSON string."
-    )
-
-    print(">>> Planning Pass: Determining next action...")
     run_config = RunConfig(tracing_disabled=True)
-    planner_result = await Runner.run(planner_agent, planning_prompt, run_config=run_config, max_turns=2)
+    
+    # Layer 1: Zeitgeist
+    latest_journal_entry = raw_tool_functions['get_latest_journal_entry']()
+    
+    # --- Reflection Step ---
+    print(">>> Reflection Pass: Analyzing last action...")
+    reflection_prompt = (
+        "Analyze the following journal entry. Does it contain a significant lesson (e.g., 'LESSON LEARNED', a bug fix, a new insight) that should be processed into long-term knowledge? "
+        "Or is it just a routine log of a successful action?\n\n"
+        f"### Journal Entry:\n{latest_journal_entry}"
+    )
+    reflection_result = await Runner.run(reflector_agent, reflection_prompt, run_config=run_config, max_turns=2)
+    
+    reflection = reflection_result.final_output
+    if not isinstance(reflection, Reflection):
+        print(f"<<< Reflection Failed: {reflection}. Defaulting to task queue.")
+        reflection = Reflection(decision="PROCEED_WITH_TASK", reasoning="Reflection agent failed to produce a valid decision.")
+    
+    print(f"<<< Reflection: {reflection.decision}. Reason: {reflection.reasoning}")
 
-    if not isinstance(planner_result.final_output, NextAction):
-        error_message = f"Planner failed to output a valid NextAction. Output: {planner_result.final_output}"
-        print(f"CRITICAL ERROR: {error_message}")
-        _write_journal_func(f"Cognitive Error: Planner Malfunction. {error_message}")
-        return
+    # --- Conditional Planning based on Reflection ---
+    action_to_take: NextAction
+    if reflection.decision == "INTERRUPT_FOR_LEARNING" and "No journal entries found" not in latest_journal_entry:
+        print(">>> Interruption: Processing new lesson into Inbox...")
+        inbox_filename = f"lesson_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+        inbox_path = os.path.join("1-Inbox", inbox_filename)
+        action_to_take = NextAction(
+            tool_name="write_file",
+            reasoning="The Reflector identified a new lesson in the journal. I must move this lesson to the Inbox for processing into long-term knowledge.",
+            tool_args_json=json.dumps({"path": inbox_path, "content": latest_journal_entry})
+        )
+    else:
+        # If no interruption, proceed with the normal planning process
+        constitution_content = raw_tool_functions['read_file']("0-Core/Constitution.md")
+        tools_content = raw_tool_functions['read_file']("0-Core/Tools.md")
+        async_mailbox = raw_tool_functions['read_file']("4-Async_Mailbox.md")
+        task_queue_json_content = raw_tool_functions['read_task_queue']()
+        user_input_section = f"### High-Priority User Command:\n{user_command}\n\n" if user_command else ""
+        
+        planning_prompt = (
+            f"--- Context ---\n"
+            f"Last Action's Reflection: {reflection.reasoning}\n"
+            f"User Messages (Async Mailbox):\n{async_mailbox}\n\n"
+            f"My Current Task Queue (JSON):\n```json\n{task_queue_json_content}\n```\n\n"
+            f"My Constitution:\n{constitution_content}\n\n"
+            f"My Available Tools:\n```markdown\n{tools_content}\n```\n\n"
+            f"--- INSTRUCTIONS ---\n"
+            "1.  **PRIORITY 1: User Command.** If a high-priority user command exists, address it immediately.\n"
+            "2.  **PRIORITY 2: Task Queue.** If there is no user command, execute the next task from your task queue.\n"
+            "Follow these priorities. Output ONLY the JSON for the `NextAction`."
+        )
+        print(">>> Planning Pass: Determining next action from task queue...")
+        planner_result = await Runner.run(planner_agent, planning_prompt, run_config=run_config, max_turns=2)
+        if not isinstance(planner_result.final_output, NextAction):
+            print(f"CRITICAL ERROR: Planner failed to output a valid NextAction. Output: {planner_result.final_output}")
+            return
+        action_to_take = planner_result.final_output
 
-    action_to_take = planner_result.final_output
     print(f"<<< Plan Received: `{action_to_take.tool_name}`. Reason: {action_to_take.reasoning}")
 
-    # 3. Execution Step
+    # Execution Step
     tool_function = raw_tool_functions.get(action_to_take.tool_name)
     execution_result = ""
     if not tool_function:
@@ -97,80 +124,21 @@ async def perform_cognitive_step(user_command: str | None = None):
             execution_result = await result if asyncio.iscoroutine(result) else result
         except Exception as e:
             execution_result = f"Error executing tool '{action_to_take.tool_name}': {e}"
-
-    print(f"<<< Execution Result (truncated): {execution_result[:200]}...")
-
-    if execution_result.startswith("Error:"):
-        if action_to_take.tool_name != 'answer_user':
-             raw_tool_functions['answer_user'](f"I encountered an error trying to perform your request: {execution_result}")
-        journal_entry = (f"# Cognitive Cycle FAILURE...\n**Execution Result:**\n```\n{execution_result}\n```\n")
-        _write_journal_func(journal_entry)
-        print("Journaling complete. Halting cycle due to error.")
-        return
-
-    # --- NEW: Synthesis Pass ---
-    # If the first action was a successful read operation in response to a user,
-    # perform a second pass to synthesize the answer.
-    if user_command and action_to_take.tool_name in ["read_file", "list_files", "search_code"]:
-        print(">>> Synthesis Pass: Deciding how to answer the user...")
-        synthesis_prompt = (
-            f"### User's Original Question:\n{user_command}\n\n"
-            f"### Result from Initial Action (`{action_to_take.tool_name}`):\n"
-            f"```\n{execution_result}\n```\n\n"
-            "--- INSTRUCTIONS ---\n"
-            "You have successfully retrieved the information needed. Your final step is to present this to the user. "
-            "Use the `answer_user` tool. Summarize the result if it is long, but present the full content if it is short and directly answers the question. "
-            "Your output must be a single `answer_user` tool call."
-        )
-        synthesis_result = await Runner.run(planner_agent, synthesis_prompt, run_config=run_config, max_turns=2)
-        
-        if isinstance(synthesis_result.final_output, NextAction) and synthesis_result.final_output.tool_name == 'answer_user':
-            action_to_take = synthesis_result.final_output
-            tool_args = json.loads(action_to_take.tool_args_json)
-            print(f">>> Executing Synthesized Action: `{action_to_take.tool_name}`")
-            execution_result = raw_tool_functions['answer_user'](**tool_args)
-        else:
-            print("<<< Synthesis Failed: Could not determine how to answer. Responding with raw data.")
-            raw_tool_functions['answer_user'](execution_result)
-
-    # 4. Task Update (Only run if not a user-facing answer)
-    if action_to_take.tool_name == 'answer_user':
-        task_update_log_entry = "No task update needed; answered user directly."
-        print(f"<<< {task_update_log_entry}")
-    else:
-        # ... (Task update logic remains the same)
-        print(">>> Task Update Pass: Reflecting on action taken...")
-        task_update_prompt = (
-            "### Original Task Queue (JSON):\n"
-            f"```json\n{task_queue_json_content}\n```\n\n"
-            f"### Action Taken: `{action_to_take.tool_name}` with args `{action_to_take.tool_args_json}`\n"
-            f"### Action Result:\n{execution_result}\n\n"
-            "--- INSTRUCTIONS ---\n"
-            "Based on the action's result, update the task list. If a task is done, mark it 'done'. "
-            "Return a JSON object where `tasks_json` is a JSON-formatted *string* of the *entire*, updated list."
-        )
-        task_update_result = await Runner.run(task_updater_agent, task_update_prompt, run_config=run_config, max_turns=2)
-        if not isinstance(task_update_result.final_output, TaskQueue):
-            task_update_log_entry = f"Task Update Failed: Updater agent did not return valid TaskQueue object. Result: {task_update_result.final_output}"
-        else:
-            try:
-                updated_tasks_list = json.loads(task_update_result.final_output.tasks_json)
-                update_status = raw_tool_functions['update_task_queue'](updated_tasks_list)
-                task_update_log_entry = f"Task queue updated. Status: {update_status}"
-            except Exception as e:
-                task_update_log_entry = f"Task Update Failed: Could not process updater response. Error: {e}"
-        print(f"<<< {task_update_log_entry}")
-
-
-    # 5. Journaling Step
-    journal_entry = (
-        f"# Cognitive Cycle: {datetime.now().isoformat()}\n\n"
-        f"**User Command:** {user_command or 'None'}\n\n"
-        f"**Final Action:** `{action_to_take.tool_name}`\n\n"
-        f"**Reasoning:** {action_to_take.reasoning}\n\n"
-        f"**Arguments JSON String:**\n```json\n{action_to_take.tool_args_json}\n```\n\n"
-        f"**Execution Result:**\n```\n{execution_result}\n```\n\n"
-    )
     
-    journal_result = _write_journal_func(journal_entry)
-    print(f"Journaling complete: {journal_result}")
+    print(f"<<< Execution Result (truncated): {execution_result[:100]}...")
+    
+    task_update_log_entry = "No task update needed for this cycle." # Default message
+    # Synthesis & Task Update (Simplified for this test)
+    if user_command and action_to_take.tool_name in ["read_file", "list_files", "search_code"]:
+        print(">>> Synthesis Step: Directly answering user with retrieved information.")
+        execution_result = raw_tool_functions['answer_user'](answer=execution_result)
+    elif not user_command:
+        # Only update task queue for background tasks
+        # This logic will be expanded later
+        task_update_log_entry = "Task update would happen here for background tasks."
+
+
+    # Journaling
+    journal_entry = (f"# Cognitive Cycle: {datetime.now().isoformat()}\n\n" f"**User Command:** {user_command or 'None'}\n\n" f"**Reflection:** {reflection.decision} - {reflection.reasoning}\n\n" f"**Final Action:** `{action_to_take.tool_name}`\n\n" f"**Reasoning:** {action_to_take.reasoning}\n\n" f"**Execution Result:**\n```\n{execution_result}\n```\n")
+    raw_tool_functions['write_journal'](journal_entry)
+    print("Journaling complete.")
