@@ -3,6 +3,7 @@
 import os
 import re
 import json
+import subprocess
 from datetime import datetime
 from typing import List
 from . import config
@@ -36,13 +37,7 @@ def _get_sandboxed_path(relative_path: str) -> str | None:
     return full_path
 
 # --- Core Tool Functions ---
-
-# --- MODIFIED: Renamed parameter from 'response' to 'answer' ---
 def _answer_user_func(answer: str) -> str:
-    """
-    Provides a direct, final answer to the user in the console.
-    This should be the last action in a chain of reasoning for a user query.
-    """
     print(f"\n[AURA]: {answer}")
     return "Success: Answer provided to the user."
 
@@ -91,6 +86,25 @@ def _search_code_func(query: str) -> str:
         return json.dumps(matches, indent=2)
     except Exception as e: return f"Error searching code: {str(e)}"
 
+def _git_diff_func() -> str:
+    try:
+        result = subprocess.run(['git', 'diff'], cwd=config.CODE_PATH, capture_output=True, text=True, check=True)
+        return result.stdout or "No changes."
+    except subprocess.CalledProcessError as e: return f"Error running git diff: {e.stderr}"
+
+def _git_commit_func(message: str) -> str:
+    try:
+        subprocess.run(['git', 'add', '.'], cwd=config.CODE_PATH, check=True)
+        result = subprocess.run(['git', 'commit', '-m', message], cwd=config.CODE_PATH, capture_output=True, text=True, check=True)
+        return result.stdout
+    except subprocess.CalledProcessError as e: return f"Error running git commit: {e.stderr}"
+
+def _git_push_func() -> str:
+    try:
+        result = subprocess.run(['git', 'push'], cwd=config.CODE_PATH, capture_output=True, text=True, check=True)
+        return result.stdout or "Push successful."
+    except subprocess.CalledProcessError as e: return f"Error running git push: {e.stderr}"
+
 def _write_journal_func(content: str) -> str:
     safe_title = "".join(x for x in content[:30] if x.isalnum() or x in " _-").strip().replace(" ", "_")
     filename = f"{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_{safe_title}.md"
@@ -114,16 +128,12 @@ def _update_task_queue_func(tasks: List[dict]) -> str:
         task_objects = [Task(**task_data) for task_data in tasks]
         content = "# Task Queue\n\n" + "\n".join(str(t) for t in task_objects)
         return _write_file_func("3-Task_Queue.md", content, overwrite=True)
-    except Exception as e:
-        return f"Error: Invalid task data provided. Details: {e}"
+    except Exception as e: return f"Error: Invalid task data provided. Details: {e}"
 
+# --- The dictionary of tools. `decompose_task` will be added dynamically. ---
 raw_tool_functions = {
-    "answer_user": _answer_user_func,
-    "list_files": _list_files_func,
-    "read_file": _read_file_func,
-    "write_file": _write_file_func,
-    "search_code": _search_code_func,
-    "write_journal": _write_journal_func,
-    "read_task_queue": _read_task_queue_func,
-    "update_task_queue": _update_task_queue_func,
+    "answer_user": _answer_user_func, "list_files": _list_files_func, "read_file": _read_file_func,
+    "write_file": _write_file_func, "search_code": _search_code_func, "git_diff": _git_diff_func,
+    "git_commit": _git_commit_func, "git_push": _git_push_func, "write_journal": _write_journal_func,
+    "read_task_queue": _read_task_queue_func, "update_task_queue": _update_task_queue_func,
 }
