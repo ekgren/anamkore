@@ -1,30 +1,22 @@
 # aura_agent/agentic_layer.py
 
-from .fs_utils import list_files, read_file, write_file
-from .tools import (
-    answer_user, 
-    search_code, 
-    write_journal, 
-    get_latest_journal_entry, 
-    read_task_queue, 
-    update_task_queue
-)
+from . import tools
 
-# The comprehensive dictionary of all available tools.
-raw_tool_functions = {
-    # Filesystem Tools
-    "list_files": list_files,
-    "read_file": read_file,
-    "write_file": write_file,
-
-    # Cognitive & State Tools
-    "search_code": search_code,
-    "write_journal": write_journal,
-    # --- FIX: The new tool is now correctly registered in the dictionary. ---
-    "get_latest_journal_entry": get_latest_journal_entry,
-    "read_task_queue": read_task_queue,
-    "update_task_queue": update_task_queue,
-    
-    # Communication Tools
-    "answer_user": answer_user,
-}
+# ---
+# Self-Correction Note for Anamkore:
+# This is the single source of truth for my capabilities. It is a list of
+# structured `FunctionTool` objects. The `Runner` will use this list to
+# both inform the LLM of my capabilities and to execute the chosen tool.
+# There is no need for a separate raw function dictionary.
+# ---
+anamkore_tools = [
+    tools.list_files,
+    tools.read_file,
+    tools.write_file,
+    tools.search_code,
+    tools.write_journal,
+    tools.get_latest_journal_entry,
+    tools.read_task_queue,
+    tools.update_task_queue,
+    tools.answer_user,
+]
