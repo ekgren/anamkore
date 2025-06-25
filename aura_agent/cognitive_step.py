@@ -52,10 +52,8 @@ task_updater_agent = Agent(
 async def perform_cognitive_step(user_command: str | None = None):
     run_config = RunConfig(tracing_disabled=True)
     
-    # Layer 1: Zeitgeist
     latest_journal_entry = raw_tool_functions['get_latest_journal_entry']()
     
-    # --- Reflection Step ---
     print(">>> Reflection Pass: Analyzing last action...")
     reflection_prompt = (
         "Analyze the following journal entry. Does it contain a significant lesson (e.g., 'LESSON LEARNED', a bug fix, a new insight) that should be processed into long-term knowledge? "
@@ -71,7 +69,6 @@ async def perform_cognitive_step(user_command: str | None = None):
     
     print(f"<<< Reflection: {reflection.decision}. Reason: {reflection.reasoning}")
 
-    # --- Conditional Planning based on Reflection ---
     action_to_take: NextAction
     if reflection.decision == "INTERRUPT_FOR_LEARNING" and "No journal entries found" not in latest_journal_entry:
         print(">>> Interruption: Processing new lesson into Inbox...")
@@ -83,7 +80,6 @@ async def perform_cognitive_step(user_command: str | None = None):
             tool_args_json=json.dumps({"path": inbox_path, "content": latest_journal_entry})
         )
     else:
-        # If no interruption, proceed with the normal planning process
         constitution_content = raw_tool_functions['read_file']("0-Core/Constitution.md")
         tools_content = raw_tool_functions['read_file']("0-Core/Tools.md")
         async_mailbox = raw_tool_functions['read_file']("4-Async_Mailbox.md")
@@ -97,12 +93,15 @@ async def perform_cognitive_step(user_command: str | None = None):
             f"My Current Task Queue (JSON):\n```json\n{task_queue_json_content}\n```\n\n"
             f"My Constitution:\n{constitution_content}\n\n"
             f"My Available Tools:\n```markdown\n{tools_content}\n```\n\n"
-            f"--- INSTRUCTIONS ---\n"
-            "1.  **PRIORITY 1: User Command.** If a high-priority user command exists, address it immediately.\n"
-            "2.  **PRIORITY 2: Task Queue.** If there is no user command, execute the next task from your task queue.\n"
-            "Follow these priorities. Output ONLY the JSON for the `NextAction`."
+            f"--- Standard Operating Procedures (SOPs) ---\n"
+            "1.  **PRIORITY 1: User Command.** Address the user's command directly.\n"
+            "2.  **Meta-Questions:** If the user asks a question about my state (e.g., 'What is your current task?', 'What do you know about X?'), I must first use my tools (`read_task_queue`, `search_code`, etc.) to find the information, and then use `answer_user` to respond. Answering the user's question is the highest priority.\n"
+            "3.  **Task Queue:** If there is no user command, execute the next task from my task queue.\n\n"
+            f"--- The Task ---\n"
+            f"{user_input_section}"
+            "Follow the SOPs. Determine the single best tool call to execute now. Output ONLY the JSON for the `NextAction`."
         )
-        print(">>> Planning Pass: Determining next action from task queue...")
+        print(">>> Planning Pass: Determining next action...")
         planner_result = await Runner.run(planner_agent, planning_prompt, run_config=run_config, max_turns=2)
         if not isinstance(planner_result.final_output, NextAction):
             print(f"CRITICAL ERROR: Planner failed to output a valid NextAction. Output: {planner_result.final_output}")
@@ -111,7 +110,6 @@ async def perform_cognitive_step(user_command: str | None = None):
 
     print(f"<<< Plan Received: `{action_to_take.tool_name}`. Reason: {action_to_take.reasoning}")
 
-    # Execution Step
     tool_function = raw_tool_functions.get(action_to_take.tool_name)
     execution_result = ""
     if not tool_function:
@@ -120,6 +118,7 @@ async def perform_cognitive_step(user_command: str | None = None):
         try:
             tool_args = json.loads(action_to_take.tool_args_json) if action_to_take.tool_args_json else {}
             print(f">>> Executing Tool: `{action_to_take.tool_name}` with args: {tool_args}")
+            # --- FIX: Corrected variable name from 'args' to 'tool_args' ---
             result = tool_function(**tool_args)
             execution_result = await result if asyncio.iscoroutine(result) else result
         except Exception as e:
@@ -127,18 +126,13 @@ async def perform_cognitive_step(user_command: str | None = None):
     
     print(f"<<< Execution Result (truncated): {execution_result[:100]}...")
     
-    task_update_log_entry = "No task update needed for this cycle." # Default message
-    # Synthesis & Task Update (Simplified for this test)
-    if user_command and action_to_take.tool_name in ["read_file", "list_files", "search_code"]:
+    task_update_log_entry = "No task update needed for this cycle."
+    if user_command and action_to_take.tool_name in ["read_file", "list_files", "search_code", "read_task_queue"]:
         print(">>> Synthesis Step: Directly answering user with retrieved information.")
         execution_result = raw_tool_functions['answer_user'](answer=execution_result)
     elif not user_command:
-        # Only update task queue for background tasks
-        # This logic will be expanded later
         task_update_log_entry = "Task update would happen here for background tasks."
 
-
-    # Journaling
     journal_entry = (f"# Cognitive Cycle: {datetime.now().isoformat()}\n\n" f"**User Command:** {user_command or 'None'}\n\n" f"**Reflection:** {reflection.decision} - {reflection.reasoning}\n\n" f"**Final Action:** `{action_to_take.tool_name}`\n\n" f"**Reasoning:** {action_to_take.reasoning}\n\n" f"**Execution Result:**\n```\n{execution_result}\n```\n")
     raw_tool_functions['write_journal'](journal_entry)
     print("Journaling complete.")
