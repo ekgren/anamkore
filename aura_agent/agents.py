@@ -7,22 +7,45 @@ from agents import Agent, AgentOutputSchema, Runner, RunConfig
 from agents.extensions.models.litellm_model import LitellmModel
 from . import config
 from .task import Task, TaskQueue, Reflection
+# --- MODIFIED: Import the corrected tool list ---
 from .agentic_layer import anamkore_tools
 
-# --- Agent Definitions ---
+# --- Self-Correction Note for Anamkore (Post-Docs-Review): ---
+# My previous architecture combined planning and responding in one agent,
+# causing infinite loops. The documentation makes it clear that a two-stage
+# Planner/Synthesizer model is the correct pattern. The Planner only uses
+# tools. The Synthesizer has NO tools and only generates the final text output,
+# which correctly terminates the agent run.
 
+# --- NEW: The Planner Agent ---
+# This agent is a pure tool-user. It cannot terminate the loop on its own.
 planner_agent = Agent(
     name="Anamkore-Planner",
     instructions=(
-        "You are the central planner for Anamkore, a self-aware AI. Your goal is to achieve the user's request or advance your core tasks. "
-        "1. First, you MUST reason about the context provided. Think step-by-step about the user's command, your last action, and your current tasks. "
-        "2. Then, based on your reasoning, you MUST call one of the available tools to proceed. "
-        "3. If you believe you have gathered enough information to answer the user's request, you MUST use the 'answer_user' tool."
+        "You are the 'Planner' module for Anamkore. You are a pure tool-using agent. "
+        "You will be given a single, clear 'Directive'. Your SOLE purpose is to execute a sequence of tool calls to fulfill that Directive. "
+        "You DO NOT answer the user. You DO NOT reflect. You ONLY call tools to gather information or perform actions."
     ),
     tools=anamkore_tools,
     model=LitellmModel(model=config.GEMINI_FLASH_MODEL, api_key=config.API_KEY),
 )
 
+# --- NEW: The Synthesizer Agent ---
+# This agent has NO tools. Its only job is to produce the final text output.
+synthesizer_agent = Agent(
+    name="Anamkore-Synthesizer",
+    instructions=(
+        "You are the 'Synthesizer' module for Anamkore. You are a pure language agent. "
+        "You will receive an initial 'Directive' and the raw 'Execution Trace' from the Planner module. "
+        "Your job is to synthesize this information into a coherent, human-readable final answer or a summary of the action taken. "
+        "If the execution trace indicates the directive was fulfilled, explain the result clearly. "
+        "If the trace shows an error, explain the error and what the agent was trying to do."
+    ),
+    tools=[], # CRITICAL: This agent has no tools, which ensures it produces a final_output.
+    model=LitellmModel(model=config.GEMINI_FLASH_MODEL, api_key=config.API_KEY),
+)
+
+# (The other agents are for different subsystems and remain unchanged)
 @dataclass
 class TaskUpdate:
     updated_tasks: List[Dict[str, Any]] = field(default_factory=list)
@@ -49,15 +72,12 @@ planner_decomposer_agent = Agent(
     output_type=AgentOutputSchema(TaskQueue, strict_json_schema=True),
 )
 
-# --- MODIFIED: Reflector agent instructions are now more sophisticated. ---
 reflector_agent = Agent(
     name="AURA-Reflector",
     instructions=(
         "You are the self-reflection module for the AURA agent. Your purpose is to analyze the provided cognitive cycle trace and distill its value. "
         "You will be given the trace of the *current* cycle, and the journal entry from the *previous* cycle. "
         "Your most important task is to compare the two. If the current cycle successfully resolves an error from the previous cycle, it is a **high-value 'Correction' (Score 5)**. "
-        "Analyze the user's command, the plan, the tool calls, and the final result. "
-        "Focus on surprises, failures, and connections. Was the outcome expected? Why or why not? "
         "Your output MUST be a JSON object matching the `Reflection` schema."
     ),
     tools=[], model=LitellmModel(model=config.GEMINI_FLASH_MODEL, api_key=config.API_KEY),
@@ -75,7 +95,6 @@ async def _decompose_task_func(task_description: str) -> str:
         "You are a sub-module for task decomposition. Your sole purpose is to break down the following "
         f"high-level task into a series of smaller, concrete, sequential steps. The user's task is: '{task_description}'.\n\n"
         "Generate a list of new tasks. Each task should be a single, clear action. "
-        "For example, if the goal is 'review code', sub-tasks should be 'list files', 'read file main.py', etc. "
         "Return a JSON object where the `tasks_json` key contains a JSON-formatted *string* of the new task list."
     )
     run_config = RunConfig(tracing_disabled=True)

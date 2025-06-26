@@ -18,10 +18,8 @@ from .task import Task, TaskModel
 
 def _get_sandboxed_path(relative_path: str) -> str:
     """A simplified but crucial sandboxing function to ensure path safety."""
-    # This prevents directory traversal attacks and ensures paths are relative.
     if ".." in relative_path:
         raise ValueError("Path traversal is not allowed.")
-    # For this system, all memory operations are within the vault.
     return os.path.abspath(os.path.join(config.VAULT_PATH, relative_path))
 
 def _list_files(path: str) -> str:
@@ -40,8 +38,6 @@ def _read_file(path: str) -> str:
     except Exception as e: return f"Error reading file '{path}': {str(e)}"
 
 def _write_file(path: str, content: str, overwrite: bool = False) -> str:
-    # The sandboxing in _get_sandboxed_path handles the root.
-    # We add a check here to ensure writes only happen in subdirectories.
     allowed_dirs = ['1-Inbox', '2-Journal', 'Knowledge']
     if not any(path.startswith(d) for d in allowed_dirs):
         return f"Error: Access denied. Can only write to {allowed_dirs} directories inside the vault."
@@ -55,7 +51,6 @@ def _write_file(path: str, content: str, overwrite: bool = False) -> str:
     except Exception as e: return f"Error writing to file '{path}': {str(e)}"
 
 def _search_code(query: str) -> str:
-    # This searches the CODE_PATH, not the VAULT_PATH, so it's an exception.
     matches = []
     try:
         for root, _, files in os.walk(config.CODE_PATH):
@@ -77,7 +72,8 @@ def _write_journal(content: str) -> str:
     filename = f"{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_{safe_title}.md"
     return _write_file(os.path.join('2-Journal', filename), content)
 
-def _get_latest_journal_entry() -> str:
+def _get_latest_journal_entry(summary_only: bool = False) -> str:
+    """Gets the latest journal entry. Can return full entry or summary only."""
     journal_path = '2-Journal'
     full_journal_path = _get_sandboxed_path(journal_path)
     try:
@@ -86,7 +82,22 @@ def _get_latest_journal_entry() -> str:
         if not files: return "No journal entries found."
         journal_files = sorted([f for f in files if f.endswith('.md')], reverse=True)
         if not journal_files: return "No journal entries found."
-        return _read_file(os.path.join(journal_path, journal_files[0]))
+        
+        latest_entry_content = _read_file(os.path.join(journal_path, journal_files[0]))
+        
+        if summary_only:
+            # --- NEW: Logic to extract only the summary part of the journal ---
+            summary_match = re.search(r"## Reflection & Synthesis\n(.*?)\n## Full Trace", latest_entry_content, re.DOTALL)
+            if summary_match:
+                # Add user command for context
+                command_match = re.search(r"\*\*User Command:\*\* (.*)", latest_entry_content)
+                user_command = command_match.group(1).strip() if command_match else "None"
+                return f"Last User Command: {user_command}\nLast Reflection:\n{summary_match.group(1).strip()}"
+            else:
+                # Fallback for critical failure logs that don't have the full structure
+                return "\n".join(latest_entry_content.splitlines()[:10]) # Return first 10 lines
+        
+        return latest_entry_content
     except Exception as e: return f"Error reading latest journal entry: {e}"
 
 def _read_task_queue() -> str:

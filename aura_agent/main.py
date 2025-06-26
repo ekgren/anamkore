@@ -1,43 +1,31 @@
 # aura_agent/main.py
 
 import asyncio
+import traceback
 from .cognitive_step import perform_cognitive_step
 from .initialization import initialize_vault_sync
-
-# --- NEW: Import prompt_toolkit for advanced UX ---
-from prompt_toolkit import PromptSession
-from prompt_toolkit.history import FileHistory
+from .core_logic import _write_journal
 
 async def main():
     """
-    The main, interactive, user-driven loop of the Anamkore agent,
-    featuring an advanced terminal interface.
+    The main, interactive, user-driven loop of the Anamkore agent.
     """
     initialize_vault_sync()
     
-    # --- NEW: Set up a persistent history file for the prompt ---
-    history = FileHistory('.anamkore_history')
-    session = PromptSession(history=history)
-
     print("\n--- Anamkore Core Loop Activating ---")
-    print("Provide a command or press Enter for a background task. Use multi-line with Esc+Enter. Exit with Ctrl-D.")
+    print("Provide a natural language command or press Enter to run a background task. Type 'exit' to quit.")
     
     cycle_count = 0
     while True:
         cycle_count += 1
+        cycle_error = None
         
         try:
-            # --- NEW: Use the advanced prompt session ---
-            user_input = await session.prompt_async(
-                f"\n[Cycle {cycle_count}] >>> ",
-                multiline=True, # Allows for multi-line input
-            )
+            user_input = input(f"\n[Cycle {cycle_count}] >>> ")
+            if user_input.strip().lower() == 'exit':
+                print("--- Anamkore shutdown sequence initiated by user. ---")
+                break
             
-            # The prompt_toolkit uses Ctrl-D to exit, which raises EOFError
-            if user_input.strip().lower() == 'exit': # Still allow 'exit' command
-                 print("--- Anamkore shutdown sequence initiated by user. ---")
-                 break
-
             await perform_cognitive_step(user_command=user_input.strip() or None)
 
         except (KeyboardInterrupt, EOFError):
@@ -46,12 +34,24 @@ async def main():
         except Exception as e:
             print(f"\n--- A CRITICAL ERROR OCCURRED IN THE CORE LOOP ---")
             print(f"Error: {e}")
+            cycle_error = traceback.format_exc() # Get the full traceback
             print("Attempting to recover on the next cycle...")
+        
+        # --- NEW: Guaranteed Failure Journaling ---
+        # If a critical error happened that prevented the normal journaling, log it here.
+        if cycle_error:
+            failure_journal_entry = (
+                f"# Cognitive Cycle: CRITICAL FAILURE\n\n"
+                f"**User Command:** {user_input or 'None'}\n\n"
+                f"A critical exception occurred that halted the cognitive step.\n\n"
+                f"**Error Traceback:**\n```\n{cycle_error}\n```"
+            )
+            _write_journal(failure_journal_entry)
+            print("Journaling critical failure complete.")
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        # This is less likely to be triggered now but kept as a fallback
         print("\n--- Anamkore shutdown sequence initiated by user. ---")
