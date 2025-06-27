@@ -1,3 +1,10 @@
+# Anamkore Agent State - Do not commit
+vault/1-Inbox/
+vault/2-Journal/
+vault/3-Task_Queue.md
+vault/4-Async_Mailbox.md
+vault/5-Current_Task.md
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -192,5 +199,3 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
-
-vault

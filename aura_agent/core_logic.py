@@ -31,8 +31,12 @@ def _read_file(path: str) -> str:
 
 def _write_file(path: str, content: str, overwrite: bool = False) -> str:
     allowed_dirs = ['1-Inbox', '2-Journal', 'Knowledge']
-    if not any(path.startswith(d) for d in allowed_dirs):
-        return f"Error: Access denied. Can only write to {allowed_dirs} directories inside the vault."
+    # Add a special exception for the task queue file itself.
+    if path == '3-Task_Queue.md' or any(path.startswith(d) for d in allowed_dirs):
+        pass  # This path is allowed
+    else:
+        return f"Error: Access denied. Can only write to {allowed_dirs} or to '3-Task_Queue.md'."
+    
     full_path = _get_sandboxed_path(path)
     try:
         if not overwrite and os.path.exists(full_path):
@@ -41,6 +45,8 @@ def _write_file(path: str, content: str, overwrite: bool = False) -> str:
         with open(full_path, 'w', encoding='utf-8') as f: f.write(content)
         return f"Success: Wrote {len(content)} bytes to '{path}'."
     except Exception as e: return f"Error writing to file '{path}': {str(e)}"
+
+
 
 def _search_code(query: str) -> str:
     # --- MODIFIED: Sandbox the search to only the agent's own source code ---
