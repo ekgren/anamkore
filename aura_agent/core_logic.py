@@ -8,14 +8,6 @@ from typing import List
 from . import config
 from .task import Task, TaskModel
 
-# ---
-# Self-Correction Note for Anamkore:
-# The previous pathing logic was fundamentally flawed. It assumed all paths were
-# relative to the project root, not the vault root. This version corrects all
-# file operations to be based on the `config.VAULT_PATH`, ensuring the agent
-# correctly interacts with its memory.
-# ---
-
 def _get_sandboxed_path(relative_path: str) -> str:
     """A simplified but crucial sandboxing function to ensure path safety."""
     if ".." in relative_path:
@@ -51,10 +43,16 @@ def _write_file(path: str, content: str, overwrite: bool = False) -> str:
     except Exception as e: return f"Error writing to file '{path}': {str(e)}"
 
 def _search_code(query: str) -> str:
+    # --- MODIFIED: Sandbox the search to only the agent's own source code ---
+    # Self-Correction Note: The previous implementation searched the entire
+    # project, including the .venv. This polluted the agent's context with
+    # irrelevant library code (e.g., tiktoken), causing it to get confused.
+    # This version restricts the search to the `aura_agent` directory, ensuring
+    # the agent reasons only about its own implementation.
+    search_path = os.path.join(config.CODE_PATH, 'aura_agent')
     matches = []
     try:
-        for root, _, files in os.walk(config.CODE_PATH):
-            if any(d in root for d in ['.git', '__pycache__', 'vault']): continue
+        for root, _, files in os.walk(search_path):
             for file in files:
                 if file.endswith(('.py', '.md', '.toml')):
                     filepath = os.path.join(root, file)
@@ -86,16 +84,20 @@ def _get_latest_journal_entry(summary_only: bool = False) -> str:
         latest_entry_content = _read_file(os.path.join(journal_path, journal_files[0]))
         
         if summary_only:
-            # --- NEW: Logic to extract only the summary part of the journal ---
-            summary_match = re.search(r"## Reflection & Synthesis\n(.*?)\n## Full Trace", latest_entry_content, re.DOTALL)
-            if summary_match:
-                # Add user command for context
-                command_match = re.search(r"\*\*User Command:\*\* (.*)", latest_entry_content)
-                user_command = command_match.group(1).strip() if command_match else "None"
-                return f"Last User Command: {user_command}\nLast Reflection:\n{summary_match.group(1).strip()}"
-            else:
-                # Fallback for critical failure logs that don't have the full structure
-                return "\n".join(latest_entry_content.splitlines()[:10]) # Return first 10 lines
+            reflection_match = re.search(r"## Reflection & Synthesis\n(.*?)\n## Full Trace", latest_entry_content, re.DOTALL)
+            full_trace_match = re.search(r"## Full Trace\n```json\n(.*?)\n```", latest_entry_content, re.DOTALL)
+
+            reflection_text = reflection_match.group(1).strip() if reflection_match else "No reflection found."
+            
+            planner_output_text = "No planner output found in trace."
+            if full_trace_match:
+                try:
+                    trace_json = json.loads(full_trace_match.group(1))
+                    planner_output_text = str(trace_json.get("planner_output", "No planner_output key in trace."))
+                except json.JSONDecodeError:
+                    planner_output_text = "Could not parse trace JSON."
+            
+            return f"Last Reflection:\n{reflection_text}\n\nLast Cycle's Planner Output:\n{planner_output_text}"
         
         return latest_entry_content
     except Exception as e: return f"Error reading latest journal entry: {e}"

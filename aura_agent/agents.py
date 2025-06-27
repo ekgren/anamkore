@@ -7,31 +7,32 @@ from agents import Agent, AgentOutputSchema, Runner, RunConfig
 from agents.extensions.models.litellm_model import LitellmModel
 from . import config
 from .task import Task, TaskQueue, Reflection
-# --- MODIFIED: Import the corrected tool list ---
 from .agentic_layer import anamkore_tools
 
 # --- Self-Correction Note for Anamkore (Post-Docs-Review): ---
-# My previous architecture combined planning and responding in one agent,
-# causing infinite loops. The documentation makes it clear that a two-stage
-# Planner/Synthesizer model is the correct pattern. The Planner only uses
-# tools. The Synthesizer has NO tools and only generates the final text output,
-# which correctly terminates the agent run.
+# My understanding of the agent loop was fundamentally wrong. The `max_turns`
+# parameter is a safety rail, not the primary control mechanism. The key insight,
+# found in the `agents.md` documentation, is the `tool_use_behavior` parameter.
+# By setting this to "stop_on_first_tool" for the Planner, I am explicitly
+# instructing the Runner to execute a single tool call and then terminate that
+# part of the run, returning the tool's output. This prevents the infinite
+# loop that has caused every `Max turns exceeded` error. This is the correct
+# way to build a single-step planning agent.
 
-# --- NEW: The Planner Agent ---
-# This agent is a pure tool-user. It cannot terminate the loop on its own.
+# --- The Planner Agent, now with the correct behavior ---
 planner_agent = Agent(
     name="Anamkore-Planner",
     instructions=(
         "You are the 'Planner' module for Anamkore. You are a pure tool-using agent. "
-        "You will be given a single, clear 'Directive'. Your SOLE purpose is to execute a sequence of tool calls to fulfill that Directive. "
-        "You DO NOT answer the user. You DO NOT reflect. You ONLY call tools to gather information or perform actions."
+        "You will be given a single, clear 'Directive'. Your SOLE purpose is to execute a single, logical tool call to fulfill that Directive. "
+        "You DO NOT answer the user. You DO NOT reflect. You ONLY call one tool."
     ),
     tools=anamkore_tools,
     model=LitellmModel(model=config.GEMINI_FLASH_MODEL, api_key=config.API_KEY),
+    tool_use_behavior="stop_on_first_tool", # CRITICAL FIX
 )
 
-# --- NEW: The Synthesizer Agent ---
-# This agent has NO tools. Its only job is to produce the final text output.
+# --- The Synthesizer Agent ---
 synthesizer_agent = Agent(
     name="Anamkore-Synthesizer",
     instructions=(
@@ -41,7 +42,7 @@ synthesizer_agent = Agent(
         "If the execution trace indicates the directive was fulfilled, explain the result clearly. "
         "If the trace shows an error, explain the error and what the agent was trying to do."
     ),
-    tools=[], # CRITICAL: This agent has no tools, which ensures it produces a final_output.
+    tools=[], # CRITICAL: This agent has no tools.
     model=LitellmModel(model=config.GEMINI_FLASH_MODEL, api_key=config.API_KEY),
 )
 
