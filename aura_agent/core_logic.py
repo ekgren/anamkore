@@ -109,16 +109,40 @@ def _get_latest_journal_entry(summary_only: bool = False) -> str:
     except Exception as e: return f"Error reading latest journal entry: {e}"
 
 def _read_task_queue() -> str:
+    """
+    Reads and parses the task queue file into JSON.
+    This version is more robust and less reliant on a strict regex for the description.
+    """
     content = _read_file("3-Task_Queue.md")
-    if content.startswith("Error:"): return json.dumps({"error": content, "tasks": []})
+    if content.startswith("Error:"):
+        return json.dumps({"error": content, "tasks": []})
+    
     tasks: List[Task] = []
-    lines = [line.strip() for line in content.splitlines() if line.strip() and not line.startswith("#")]
-    task_pattern = re.compile(r"^\s*-\s*\[(x| )\]\s*(T\d+):\s*(.+)$")
+    lines = [line.strip() for line in content.splitlines() if line.strip() and line.startswith('- [')]
+
     for line in lines:
-        match = task_pattern.match(line)
-        if match:
-            status_char, task_id, description = match.groups()
-            tasks.append(Task(id=task_id, status="done" if status_char == "x" else "todo", description=description.strip()))
+        try:
+            # Robustly find the status and task ID
+            status_match = re.search(r"\[(x| )\]", line)
+            id_match = re.search(r"(T\d+):", line)
+            
+            if status_match and id_match:
+                status_char = status_match.group(1)
+                task_id = id_match.group(1)
+                
+                # The description is everything after the task ID and colon
+                description_start_index = id_match.end()
+                description = line[description_start_index:].strip()
+                
+                tasks.append(Task(
+                    id=task_id,
+                    status="done" if status_char == "x" else "todo",
+                    description=description
+                ))
+        except (AttributeError, IndexError):
+            # Line doesn't match the expected format, skip it
+            continue
+            
     return json.dumps([task.__dict__ for task in tasks])
 
 def _update_task_queue(tasks: List[TaskModel]) -> str:

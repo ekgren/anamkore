@@ -13,12 +13,10 @@ from . import config
 STRATEGIC_TASK_QUEUE_CONTENT = """
 # Task Queue
 
-- [ ] T1: **META-CRITICAL** - Implement a new tool `task_complete(task_id: str)` that clears the `5-Current_Task.md` file and logs the completion. This is a prerequisite for the new cognitive flow.
-- [ ] T2: **META-CRITICAL** - Rewrite the core logic in `cognitive_step.py` to implement the new state machine. It must check `5-Current_Task.md` first. If the file is empty, it must select the top task from `3-Task_Queue.md` and move it to `5-Current_Task.md`.
-- [ ] T3: **CRITICAL** - Implement the Checkpointing system. The full requirements for this system are detailed in `Knowledge/Reference_Specifications/checkpointing.md`.
-- [ ] T4: **CRITICAL** - Implement the new `code_writer` tool, inspired by `gemini_cli_edit_tool.ts`.
-- [ ] T5: Implement the `run_self_test` tool.
-- [ ] T6: Upgrade the existing `search_code` and `list_files` tools.
+- [ ] T1: Create a new tool file at `aura_agent/task_tools.py`.
+- [ ] T2: Add the basic function definition for `task_complete(task_id: str)` to the new `aura_agent/task_tools.py` file.
+- [ ] T3: Import the new `task_complete` tool into `aura_agent/agentic_layer.py` and add it to the `anamkore_tools` list.
+- [ ] T4: Implement the full logic for the `task_complete` tool.
 """
 
 INITIAL_ASYNC_MAILBOX_CONTENT = """

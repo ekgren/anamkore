@@ -17,7 +17,7 @@ CODE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
 # Model names
 GEMINI_PRO_MODEL = "gemini/gemini-2.5-pro"
-GEMINI_FLASH_MODEL = "gemini/gemini-2.5-flash-preview-04-17"
+GEMINI_FLASH_MODEL = "gemini/gemini-2.5-flash-lite-preview-06-17"
 
 if not API_KEY:
     raise ValueError("GOOGLE_API_KEY not found in .env file. Please add it.")
