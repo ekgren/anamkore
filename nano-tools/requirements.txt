@@ -1,0 +1,5 @@
+openai-agents
+litellm
+typer[rich]
+requests
+html2text
