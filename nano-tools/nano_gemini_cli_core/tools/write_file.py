@@ -1,6 +1,6 @@
 # nano-tools/nano_gemini_cli_core/tools/write_file.py
 import os
-from openai_agents import function_tool
+from agents import function_tool
 import litellm
 
 def _is_path_within_root(path_to_check: str, root_directory: str) -> bool:
@@ -38,16 +38,9 @@ def _run_correction_agent(file_path: str, proposed_content: str) -> str:
         print(f"Content correction agent failed: {e}. Using original content.")
         return proposed_content
 
-@function_tool
-def write_file(file_path: str, content: str, agentic_correction: bool = False) -> str:
+def _write_file_impl(file_path: str, content: str, agentic_correction: bool = False) -> str:
     """
-    Writes content to a specified file, with security checks and optional agentic correction.
-
-    Args:
-        file_path: The absolute path to the file to write to. Must be within the project directory.
-        content: The content to write to the file.
-        agentic_correction: If True, an agentic loop will be used to review and correct the content
-                            before writing. Defaults to False.
+    Core implementation for writing content to a file.
     """
     root_directory = os.getcwd()
     abs_file_path = os.path.abspath(file_path)
@@ -86,3 +79,16 @@ def write_file(file_path: str, content: str, agentic_correction: bool = False) -
 
     except Exception as e:
         return f"An unexpected error occurred while writing to the file: {e}"
+
+@function_tool
+def write_file(file_path: str, content: str, agentic_correction: bool = False) -> str:
+    """
+    Writes content to a specified file, with security checks and optional agentic correction.
+
+    Args:
+        file_path: The absolute path to the file to write to. Must be within the project directory.
+        content: The content to write to the file.
+        agentic_correction: If True, an agentic loop will be used to review and correct the content
+                            before writing. Defaults to False.
+    """
+    return _write_file_impl(file_path, content, agentic_correction)

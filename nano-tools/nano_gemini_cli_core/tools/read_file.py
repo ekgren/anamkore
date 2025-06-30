@@ -1,6 +1,6 @@
 # nano-tools/nano_gemini_cli_core/tools/read_file.py
 import os
-from openai_agents import function_tool
+from agents import function_tool
 from typing import Optional, List, Dict
 import fnmatch
 from ..utils.paths import shorten_path
@@ -19,18 +19,9 @@ def _get_gemini_ignored_patterns(root_directory: str) -> List[str]:
     with open(ignore_file, "r", encoding="utf-8") as f:
         return [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
-@function_tool
-def read_file(absolute_path: str, offset: Optional[int] = None, limit: Optional[int] = None) -> Dict[str, str]:
+def _read_file_impl(absolute_path: str, offset: Optional[int] = None, limit: Optional[int] = None) -> Dict[str, str]:
     """
-    Reads and returns the content of a specified file, with support for pagination.
-
-    Args:
-        absolute_path: The absolute path to the file to read. Must be within the project directory.
-        offset: The 0-based line number to start reading from. Requires 'limit' to be set.
-        limit: The maximum number of lines to read. Use with 'offset' for pagination.
-        
-    Returns:
-        A dictionary containing 'llm_content' for the agent and 'display_content' for the user.
+    Core implementation for reading file content.
     """
     root_directory = os.getcwd()
 
@@ -83,3 +74,18 @@ def read_file(absolute_path: str, offset: Optional[int] = None, limit: Optional[
     except Exception as e:
         error_msg = f"An unexpected error occurred while reading the file: {e}"
         return {"llm_content": error_msg, "display_content": error_msg}
+
+@function_tool
+def read_file(absolute_path: str, offset: Optional[int] = None, limit: Optional[int] = None) -> Dict[str, str]:
+    """
+    Reads and returns the content of a specified file, with support for pagination.
+
+    Args:
+        absolute_path: The absolute path to the file to read. Must be within the project directory.
+        offset: The 0-based line number to start reading from. Requires 'limit' to be set.
+        limit: The maximum number of lines to read. Use with 'offset' for pagination.
+        
+    Returns:
+        A dictionary containing 'llm_content' for the agent and 'display_content' for the user.
+    """
+    return _read_file_impl(absolute_path, offset, limit)

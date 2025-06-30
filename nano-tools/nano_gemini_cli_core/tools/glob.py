@@ -2,7 +2,8 @@
 import os
 import glob as py_glob
 import time
-from openai_agents import function_tool
+import fnmatch
+from agents import function_tool
 from typing import List, Optional, Dict
 from ..utils.git_utils import is_git_repository
 from ..utils.paths import shorten_path
@@ -41,23 +42,22 @@ def _sort_file_entries(entries: List[str]) -> List[str]:
 
     return sorted(entries, key=sort_key, reverse=True)
 
-@function_tool
-def glob(pattern: str, path: str = '.', case_sensitive: bool = False, respect_git_ignore: bool = True) -> Dict[str, str]:
+def _glob_impl(pattern: str, path: str = '.', case_sensitive: bool = False, respect_git_ignore: bool = True) -> Dict[str, str]:
     """
-    Finds all pathnames matching a specified pattern, with intelligent sorting and gitignore support.
-
-    Args:
-        pattern: The glob pattern to search for (e.g., 'src/**/*.py', '*.md').
-        path: The directory to search in. Defaults to the current directory.
-        case_sensitive: If True, the search will be case-sensitive. Defaults to False.
-        respect_git_ignore: If True, files and directories ignored by git will be excluded. Defaults to True.
-        
-    Returns:
-        A dictionary containing 'llm_content' for the agent and 'display_content' for the user.
+    Core implementation for finding files matching a glob pattern.
     """
     try:
         search_path = os.path.join(path, pattern)
-        all_files = py_glob.glob(search_path, recursive=True, case_sensitive=case_sensitive)
+        
+        # Perform a case-insensitive glob first
+        all_files = py_glob.glob(search_path, recursive=True)
+        
+        # If case_sensitive is True, filter the results
+        if case_sensitive:
+            # We need to construct the full pattern for fnmatchcase
+            full_pattern = os.path.join(os.path.abspath(path), pattern)
+            all_files = [f for f in all_files if fnmatch.fnmatchcase(os.path.abspath(f), full_pattern)]
+
         files_only = [f for f in all_files if os.path.isfile(f)]
 
         if respect_git_ignore:
@@ -79,3 +79,19 @@ def glob(pattern: str, path: str = '.', case_sensitive: bool = False, respect_gi
     except Exception as e:
         error_msg = f"An error occurred during glob operation: {e}"
         return {"llm_content": error_msg, "display_content": error_msg}
+
+@function_tool
+def glob(pattern: str, path: str = '.', case_sensitive: bool = False, respect_git_ignore: bool = True) -> Dict[str, str]:
+    """
+    Finds all pathnames matching a specified pattern, with intelligent sorting and gitignore support.
+
+    Args:
+        pattern: The glob pattern to search for (e.g., 'src/**/*.py', '*.md').
+        path: The directory to search in. Defaults to the current directory.
+        case_sensitive: If True, the search will be case-sensitive. Defaults to False.
+        respect_git_ignore: If True, files and directories ignored by git will be excluded. Defaults to True.
+        
+    Returns:
+        A dictionary containing 'llm_content' for the agent and 'display_content' for the user.
+    """
+    return _glob_impl(pattern, path, case_sensitive, respect_git_ignore)

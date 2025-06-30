@@ -1,6 +1,6 @@
 # nano-tools/nano_gemini_cli_core/tools/memory_tool.py
 import os
-from openai_agents import function_tool
+from agents import function_tool
 
 # --- Constants matching the gemini-cli implementation ---
 GEMINI_CONFIG_DIR = ".gemini"
@@ -21,17 +21,13 @@ def _ensure_newline_separation(content: str) -> str:
         return "\n"
     return "\n\n"
 
-@function_tool
-def save_memory(fact: str) -> str:
+def _save_memory_impl(fact: str) -> Dict[str, str]:
     """
-    Saves a specific fact to the global long-term memory file (~/.gemini/GEMINI.md).
-    This is useful for remembering user preferences or key details across sessions.
-
-    Args:
-        fact: The fact to remember. Should be a clear, self-contained statement.
+    Core implementation for saving a fact to memory.
     """
     if not fact or not isinstance(fact, str) or not fact.strip():
-        return "Error: The 'fact' parameter must be a non-empty string."
+        msg = "Error: The 'fact' parameter must be a non-empty string."
+        return {"llm_content": msg, "display_content": msg}
 
     memory_file_path = get_global_memory_file_path()
     
@@ -79,7 +75,20 @@ def save_memory(fact: str) -> str:
         with open(memory_file_path, 'w', encoding='utf-8') as f:
             f.write(content)
 
-        return f"Okay, I've remembered that: \"{processed_fact}\""
+        msg = f"Okay, I've remembered that: \"{processed_fact}\""
+        return {"llm_content": msg, "display_content": msg}
 
     except Exception as e:
-        return f"Error saving fact to memory: {e}"
+        msg = f"Error saving fact to memory: {e}"
+        return {"llm_content": msg, "display_content": msg}
+
+@function_tool
+def save_memory(fact: str) -> Dict[str, str]:
+    """
+    Saves a specific fact to the global long-term memory file (~/.gemini/GEMINI.md).
+    This is useful for remembering user preferences or key details across sessions.
+
+    Args:
+        fact: The fact to remember. Should be a clear, self-contained statement.
+    """
+    return _save_memory_impl(fact)

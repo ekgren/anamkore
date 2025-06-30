@@ -1,7 +1,7 @@
 # nano-tools/nano_gemini_cli_core/tools/ls.py
 import os
 import fnmatch
-from openai_agents import function_tool
+from agents import function_tool
 from typing import List, Optional, Dict
 from ..utils.git_utils import is_git_repository
 from ..utils.paths import shorten_path
@@ -26,18 +26,9 @@ def _get_git_ignored_files(path: str) -> List[str]:
     except (subprocess.CalledProcessError, FileNotFoundError):
         return []
 
-@function_tool
-def list_directory(path: str = '.', respect_git_ignore: bool = True, ignore: Optional[List[str]] = None) -> Dict[str, str]:
+def _list_directory_impl(path: str = '.', respect_git_ignore: bool = True, ignore: Optional[List[str]] = None) -> Dict[str, str]:
     """
-    Lists the contents of a specified directory, with gitignore support and intelligent sorting.
-
-    Args:
-        path: The absolute path to the directory to list. Defaults to the current directory.
-        respect_git_ignore: If True, files and directories ignored by git will be excluded. Defaults to True.
-        ignore: A list of glob patterns to ignore.
-        
-    Returns:
-        A dictionary containing 'llm_content' for the agent and 'display_content' for the user.
+    Core implementation for listing directory contents.
     """
     root_directory = os.getcwd()
     abs_path = os.path.abspath(path)
@@ -81,3 +72,18 @@ def list_directory(path: str = '.', respect_git_ignore: bool = True, ignore: Opt
     except Exception as e:
         error_msg = f"An error occurred: {e}"
         return {"llm_content": error_msg, "display_content": error_msg}
+
+@function_tool
+def list_directory(path: str = '.', respect_git_ignore: bool = True, ignore: Optional[List[str]] = None) -> Dict[str, str]:
+    """
+    Lists the contents of a specified directory, with gitignore support and intelligent sorting.
+
+    Args:
+        path: The absolute path to the directory to list. Defaults to the current directory.
+        respect_git_ignore: If True, files and directories ignored by git will be excluded. Defaults to True.
+        ignore: A list of glob patterns to ignore.
+        
+    Returns:
+        A dictionary containing 'llm_content' for the agent and 'display_content' for the user.
+    """
+    return _list_directory_impl(path, respect_git_ignore, ignore)

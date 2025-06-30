@@ -1,10 +1,13 @@
 # nano-tools/nano_gemini_cli_core/tools/edit.py
 import os
 import json
-from typing import Optional, Dict
-from openai_agents import function_tool
+import re
+from typing import Optional, Dict, Any
+from agents import function_tool
 import litellm
 from ..utils.paths import shorten_path
+
+CORRECTION_CACHE: Dict[str, Dict[str, Any]] = {}
 
 def _is_path_within_root(path_to_check: str, root_directory: str) -> bool:
     """Checks if a path is within the root directory."""
@@ -12,10 +15,31 @@ def _is_path_within_root(path_to_check: str, root_directory: str) -> bool:
     abs_path = os.path.abspath(path_to_check)
     return os.path.commonpath([abs_root, abs_path]) == abs_root
 
-def _run_correction_agent(file_path: str, old_string: str, new_string: str, file_content: str) -> Optional[str]:
+def _over_unescaping(s: str) -> str:
+    """Handles common LLM escaping issues."""
+    return s.replace('\`', '`')
+
+def _run_correction_agent(
+    file_path: str, old_string: str, new_string: str, file_content: str
+) -> Optional[Dict[str, Any]]:
     """If the initial replacement fails, this function calls the LLM to correct the 'old_string'."""
+    cache_key = f"{file_path}:{old_string}:{new_string}"
+    if cache_key in CORRECTION_CACHE:
+        return CORRECTION_CACHE[cache_key]
+
     print("Initial replacement failed. Attempting to correct with an agentic loop...")
     
+    unescaped_old_string = _over_unescaping(old_string)
+    occurrences = len(re.findall(re.escape(unescaped_old_string), file_content))
+    
+    if occurrences > 0:
+        result = {
+            "params": {"old_string": unescaped_old_string, "new_string": new_string},
+            "occurrences": occurrences,
+        }
+        CORRECTION_CACHE[cache_key] = result
+        return result
+
     correction_prompt = f"""
         You are an expert code editor. Your task is to correct an `old_string` that failed to be replaced in a file because it didn't exactly match the file's content.
         The user wanted to replace this text:
@@ -40,34 +64,41 @@ def _run_correction_agent(file_path: str, old_string: str, new_string: str, file
     
     try:
         response = litellm.completion(
-            model="gemini/gemini-1.5-flash-latest",
+            model="gemini/gemini-2.5-flash-lite-preview-06-17",
             messages=[{"role": "user", "content": correction_prompt}],
             response_format={"type": "json_object"}
         )
         corrected_json = json.loads(response.choices[0].message.content)
-        corrected_string = corrected_json.get("corrected_string")
+        corrected_old_string = corrected_json.get("corrected_string")
         
-        if corrected_string and corrected_string in file_content:
-            print(f"Agentic loop succeeded. Found corrected string.")
-            return corrected_string
-        else:
+        if not corrected_old_string or corrected_old_string not in file_content:
             print("Agentic loop failed: Corrected string not found in file.")
             return None
+
+        print(f"Agentic loop succeeded. Found corrected string.")
+        
+        corrected_occurrences = len(re.findall(re.escape(corrected_old_string), file_content))
+        
+        diff = len(corrected_old_string) - len(old_string)
+        corrected_new_string = new_string + (' ' * diff if diff > 0 else '')
+
+        result = {
+            "params": {
+                "old_string": corrected_old_string,
+                "new_string": corrected_new_string,
+            },
+            "occurrences": corrected_occurrences,
+        }
+        CORRECTION_CACHE[cache_key] = result
+        return result
             
     except Exception as e:
         print(f"An unexpected error occurred during the agentic correction loop: {e}")
         return None
 
-@function_tool
-def replace(file_path: str, old_string: str, new_string: str, expected_replacements: int = 1) -> Dict[str, str]:
+def _replace_impl(file_path: str, old_string: str, new_string: str, expected_replacements: int = 1) -> Dict[str, str]:
     """
-    Replaces a specified number of occurrences of a string in a file.
-
-    Args:
-        file_path: The absolute path to the file to modify. Must be within the project's root directory.
-        old_string: The exact string to be replaced.
-        new_string: The string to replace the old_string with.
-        expected_replacements: The number of times the old_string is expected to be found and replaced.
+    Core implementation for replacing a string in a file.
     """
     root_directory = os.getcwd()
     abs_file_path = os.path.abspath(file_path)
@@ -108,13 +139,15 @@ def replace(file_path: str, old_string: str, new_string: str, expected_replaceme
             content = f.read()
         
         string_to_replace = old_string
-        actual_occurrences = content.count(string_to_replace)
+        string_to_write = new_string
+        actual_occurrences = len(re.findall(re.escape(string_to_replace), content))
         
         if actual_occurrences == 0 and expected_replacements > 0:
-            corrected_string = _run_correction_agent(abs_file_path, old_string, new_string, content)
-            if corrected_string:
-                string_to_replace = corrected_string
-                actual_occurrences = content.count(string_to_replace)
+            correction_result = _run_correction_agent(abs_file_path, old_string, new_string, content)
+            if correction_result:
+                string_to_replace = correction_result["params"]["old_string"]
+                string_to_write = correction_result["params"]["new_string"]
+                actual_occurrences = correction_result["occurrences"]
             else:
                 error_msg = "Error: The string to replace was not found, and the agentic correction failed."
                 return {"llm_content": error_msg, "display_content": error_msg}
@@ -123,7 +156,7 @@ def replace(file_path: str, old_string: str, new_string: str, expected_replaceme
             error_msg = f"Error: Expected {expected_replacements} occurrences, but found {actual_occurrences}."
             return {"llm_content": error_msg, "display_content": error_msg}
             
-        new_content = content.replace(string_to_replace, new_string, expected_replacements)
+        new_content = content.replace(string_to_replace, string_to_write, expected_replacements)
         
         with open(abs_file_path, 'w', encoding='utf-8') as f:
             f.write(new_content)
@@ -134,3 +167,19 @@ def replace(file_path: str, old_string: str, new_string: str, expected_replaceme
     except Exception as e:
         error_msg = f"An unexpected error occurred: {e}"
         return {"llm_content": error_msg, "display_content": error_msg}
+
+@function_tool
+def replace(file_path: str, old_string: str, new_string: str, expected_replacements: int = 1) -> Dict[str, str]:
+    """
+    Replaces text within a file. By default, replaces a single occurrence, 
+    but can replace multiple occurrences when `expected_replacements` is specified. 
+    This tool requires providing significant context around the change to ensure precise targeting. 
+    Always use the read_file tool to examine the file's current content before attempting a text replacement.
+
+    Args:
+        file_path (str): The absolute path to the file to modify. Must start with '/'.
+        old_string (str): The exact literal text to replace. For single replacements, include at least 3 lines of context BEFORE and AFTER the target text, matching whitespace and indentation precisely. If this string matches multiple locations, or does not match exactly, the tool will fail.
+        new_string (str): The exact literal text to replace `old_string` with. Ensure the resulting code is correct and idiomatic.
+        expected_replacements (int): Number of replacements expected. Defaults to 1. Use when you want to replace multiple occurrences.
+    """
+    return _replace_impl(file_path, old_string, new_string, expected_replacements)

@@ -1,5 +1,5 @@
 # nano-tools/nano_gemini_cli_core/tools/web_search.py
-from openai_agents import function_tool
+from agents import function_tool
 import litellm
 from typing import List, Dict, Any
 
@@ -34,17 +34,13 @@ def _format_search_results(response: Dict[str, Any]) -> str:
         return f"Error parsing search results: {e}. Raw response: {response}"
 
 
-@function_tool
-def google_web_search(query: str) -> str:
+def _google_web_search_impl(query: str) -> Dict[str, str]:
     """
-    Performs a web search using the Gemini API's built-in Google Search tool
-    and returns a formatted result with sources.
-
-    Args:
-        query: The search query to find information on the web.
+    Core implementation for performing a web search.
     """
     if not query or not query.strip():
-        return "Error: The 'query' parameter cannot be empty."
+        msg = "Error: The 'query' parameter cannot be empty."
+        return {"llm_content": msg, "display_content": msg}
 
     try:
         # This is the correct way to trigger the backend search tool.
@@ -66,7 +62,20 @@ def google_web_search(query: str) -> str:
         )
         
         # The response object from litellm is a dict, not an object
-        return _format_search_results(response.dict())
+        formatted_results = _format_search_results(response.dict())
+        return {"llm_content": formatted_results, "display_content": "Web search completed."}
 
     except Exception as e:
-        return f"An unexpected error occurred during the web search: {e}"
+        msg = f"An unexpected error occurred during the web search: {e}"
+        return {"llm_content": msg, "display_content": msg}
+
+@function_tool
+def google_web_search(query: str) -> Dict[str, str]:
+    """
+    Performs a web search using the Gemini API's built-in Google Search tool
+    and returns a formatted result with sources.
+
+    Args:
+        query: The search query to find information on the web.
+    """
+    return _google_web_search_impl(query)

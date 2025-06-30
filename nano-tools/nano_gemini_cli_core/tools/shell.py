@@ -5,9 +5,9 @@ import asyncio
 import subprocess
 import tempfile
 import time
-from typing import Optional, Set, Callable, Awaitable
+from typing import Optional, Set, Callable, Awaitable, Dict
 
-from openai_agents import function_tool
+from agents import function_tool
 
 # --- Whitelist for approved commands ---
 # In a real application, this would be part of a larger context object.
@@ -93,20 +93,12 @@ async def _stream_subprocess(
         "pgid": None if is_windows else process.pid
     }
 
-@function_tool
-async def run_shell_command(
+async def _run_shell_command_impl(
     command: str, 
-    directory: Optional[str] = None,
-    # In a real app, the CLI would pass a callback. We simulate it here.
-    # For nano-tools, we'll just print to the console.
-    update_callback: Optional[Callable[[str], Awaitable[None]]] = None
-) -> str:
+    directory: Optional[str] = None
+) -> Dict[str, str]:
     """
-    Executes a shell command, streams its output, and reports background processes.
-
-    Args:
-        command: The shell command to execute.
-        directory: The directory to run the command in. Must be a relative path.
+    Core implementation for executing a shell command.
     """
     # --- Whitelist Check ---
     command_root = command.strip().split(' ')[0]
@@ -124,26 +116,48 @@ async def run_shell_command(
     target_dir = os.path.abspath(os.path.join(root_directory, directory)) if directory else root_directory
 
     if not _is_path_within_root(target_dir, root_directory):
-        return f"Error: Directory '{directory}' is outside the project root."
+        msg = f"Error: Directory '{directory}' is outside the project root."
+        return {"llm_content": msg, "display_content": msg}
 
+    stdout_capture = []
     async def default_callback(line: str):
         """A default callback that just prints the output."""
         print(line)
-
-    callback = update_callback or default_callback
+        stdout_capture.append(line)
 
     try:
-        result = await _stream_subprocess(command, target_dir, callback)
+        result = await _stream_subprocess(command, target_dir, default_callback)
         
         # --- Structured Output ---
-        output_parts = [
+        llm_output = [
             f"Command: {command}",
             f"Directory: {directory or '(root)'}",
             f"Exit Code: {result['returncode']}",
             f"Process Group ID: {result['pgid'] or '(N/A on Windows)'}",
-            f"Background PIDs: {result['background_pids'] or '(none)'}"
-        ]
-        return "\n---\n".join(output_parts)
+            f"Background PIDs: {result['background_pids'] or '(none)'}",
+            "---",
+            "Output:",
+        ] + stdout_capture
+        
+        display_output = f"Command finished with exit code {result['returncode']}."
+        
+        return {"llm_content": "\n".join(llm_output), "display_content": display_output}
 
     except Exception as e:
-        return f"An unexpected error occurred: {e}"
+        msg = f"An unexpected error occurred: {e}"
+        return {"llm_content": msg, "display_content": msg}
+
+@function_tool
+async def run_shell_command(
+    command: str, 
+    directory: Optional[str] = None
+) -> Dict[str, str]:
+    """
+    Executes a shell command, streams its output, and reports background processes.
+
+    Args:
+        command: The shell command to execute.
+        directory: The directory to run the command in. Must be a relative path.
+    """
+    return await _run_shell_command_impl(command, directory)
+

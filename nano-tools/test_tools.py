@@ -8,19 +8,13 @@ import os
 # --- Import all our tools ---
 # We assume this script is run from the root of the 'nano-tools' directory
 # and that the package is installed in editable mode.
-from nano_gemini_cli_core.tools import (
-    edit,
-    glob,
-    grep,
-    ls,
-    memory_tool,
-    read_file,
-    read_many_files,
-    shell,
-    web_fetch,
-    web_search,
-    write_file,
-)
+from nano_gemini_cli_core.tools.edit import _replace_impl as replace
+from nano_gemini_cli_core.tools.glob import _glob_impl as glob
+from nano_gemini_cli_core.tools.grep import _search_file_content_impl as search_file_content
+from nano_gemini_cli_core.tools.ls import _list_directory_impl as list_directory
+from nano_gemini_cli_core.tools.read_file import _read_file_impl as read_file
+from nano_gemini_cli_core.tools.shell import _run_shell_command_impl as run_shell_command
+from nano_gemini_cli_core.tools.write_file import _write_file_impl as write_file
 
 app = typer.Typer(help="A CLI to test the nano-gemini-cli tools in a standalone fashion.")
 console = Console()
@@ -44,7 +38,7 @@ def _print_result(result: dict | str):
 def test_ls(path: Annotated[str, typer.Option(help="The path to list.")] = '.'):
     """Tests the list_directory tool."""
     console.print(f"[bold]Testing 'list_directory' on path: '{path}'[/bold]\n")
-    result = ls.list_directory(path=path)
+    result = list_directory(path=path)
     _print_result(result)
 
 @app.command(name="read-file")
@@ -53,21 +47,21 @@ def test_read_file(file_path: Annotated[str, typer.Argument(help="The file to re
     console.print(f"[bold]Testing 'read_file' on file: '{file_path}'[/bold]\n")
     # Ensure we use an absolute path as the tool expects
     abs_path = os.path.abspath(file_path)
-    result = read_file.read_file(absolute_path=abs_path)
+    result = read_file(absolute_path=abs_path)
     _print_result(result)
 
 @app.command(name="glob")
 def test_glob(pattern: Annotated[str, typer.Option(help="The glob pattern.")]):
     """Tests the glob tool."""
     console.print(f"[bold]Testing 'glob' with pattern: '{pattern}'[/bold]\n")
-    result = glob.glob(pattern=pattern)
+    result = glob(pattern=pattern)
     _print_result(result)
 
 @app.command(name="grep")
 def test_grep(pattern: Annotated[str, typer.Option(help="The regex pattern.")], path: Annotated[str, typer.Option(help="The path to search.")] = '.'):
     """Tests the search_file_content tool."""
     console.print(f"[bold]Testing 'grep' with pattern: '{pattern}' in '{path}'[/bold]\n")
-    result = grep.search_file_content(pattern=pattern, path=path)
+    result = search_file_content(pattern=pattern, path=path)
     _print_result(result)
 
 @app.command(name="edit")
@@ -79,8 +73,9 @@ def test_edit(
     """Tests the replace tool."""
     console.print(f"[bold]Testing 'edit' on file: '{file_path}'[/bold]\n")
     abs_path = os.path.abspath(file_path)
-    result = edit.replace(file_path=abs_path, old_string=old_string, new_string=new_string)
+    result = replace(file_path=abs_path, old_string=old_string, new_string=new_string)
     _print_result(result)
+
 
 @app.command(name="write-file")
 def test_write_file(
@@ -90,7 +85,7 @@ def test_write_file(
     """Tests the write_file tool."""
     console.print(f"[bold]Testing 'write_file' on file: '{file_path}'[/bold]\n")
     abs_path = os.path.abspath(file_path)
-    result = write_file.write_file(file_path=abs_path, content=content)
+    result = write_file(file_path=abs_path, content=content)
     _print_result(result)
 
 @app.command(name="shell")
@@ -99,8 +94,9 @@ def test_shell(command: Annotated[str, typer.Argument(help="The shell command to
     console.print(f"[bold]Testing 'shell' with command: '{command}'[/bold]\n")
     # This tool is async, so we need to run it in an event loop
     import asyncio
-    result = asyncio.run(shell.run_shell_command(command=command))
+    result = asyncio.run(run_shell_command(command=command))
     _print_result(result)
+
 
 if __name__ == "__main__":
     app()

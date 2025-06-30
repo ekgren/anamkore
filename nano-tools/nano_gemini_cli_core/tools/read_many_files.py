@@ -1,7 +1,7 @@
 # nano-tools/nano_gemini_cli_core/tools/read_many_files.py
 import os
 import glob as py_glob
-from openai_agents import function_tool
+from agents import function_tool
 from typing import List, Optional
 from ..utils.git_utils import is_git_repository
 import subprocess
@@ -24,21 +24,14 @@ def _get_git_ignored_files(path: str) -> List[str]:
     except (subprocess.CalledProcessError, FileNotFoundError):
         return []
 
-@function_tool
-def read_many_files(
+def _read_many_files_impl(
     paths: List[str], 
     include: Optional[List[str]] = None,
     exclude: Optional[List[str]] = None,
     respect_git_ignore: bool = True
-) -> str:
+) -> Dict[str, str]:
     """
-    Reads and concatenates the content of multiple files matching glob patterns.
-
-    Args:
-        paths: A list of glob patterns or file paths to search for.
-        include: A list of additional glob patterns to include.
-        exclude: A list of glob patterns to exclude from the results.
-        respect_git_ignore: If True, files ignored by git will be excluded. Defaults to True.
+    Core implementation for reading and concatenating file contents.
     """
     root_directory = os.getcwd()
     all_patterns = paths + (include or [])
@@ -77,7 +70,8 @@ def read_many_files(
         files_to_read.append(f_path)
 
     if not files_to_read:
-        return "No files found matching the specified criteria."
+        msg = "No files found matching the specified criteria."
+        return {"llm_content": msg, "display_content": msg}
 
     # --- Content Reading and Formatting ---
     final_content = []
@@ -90,4 +84,25 @@ def read_many_files(
         except Exception as e:
             final_content.append(f"--- {relative_path} ---\nError reading file: {e}")
             
-    return "\n\n".join(final_content)
+    llm_output = "\n\n".join(final_content)
+    display_output = f"Read and combined {len(files_to_read)} file(s)."
+    
+    return {"llm_content": llm_output, "display_content": display_output}
+
+@function_tool
+def read_many_files(
+    paths: List[str], 
+    include: Optional[List[str]] = None,
+    exclude: Optional[List[str]] = None,
+    respect_git_ignore: bool = True
+) -> Dict[str, str]:
+    """
+    Reads and concatenates the content of multiple files matching glob patterns.
+
+    Args:
+        paths: A list of glob patterns or file paths to search for.
+        include: A list of additional glob patterns to include.
+        exclude: A list of glob patterns to exclude from the results.
+        respect_git_ignore: If True, files ignored by git will be excluded. Defaults to True.
+    """
+    return _read_many_files_impl(paths, include, exclude, respect_git_ignore)

@@ -9,6 +9,10 @@ The primary goal of this project is to create a standalone, feature-complete Pyt
 ## 2. Architecture
 
 - **Self-Contained Tools:** Each tool is implemented in its own Python file within `nano_gemini_cli_core/tools/`.
+- **Tool Implementation Pattern:** To ensure testability and proper integration with the `openai-agents` SDK, all tools must follow this pattern:
+    1.  **Core Logic:** The tool's functionality is placed in a private, undecorated function (e.g., `_my_tool_impl`).
+    2.  **Decorated Wrapper:** A public, `@function_tool`-decorated function serves as a simple, one-line wrapper that calls the implementation function.
+    3.  **Serializable Signatures:** The decorated function's signature must only use types that can be serialized into a JSON schema (e.g., `str`, `int`, `bool`, `List`, `Dict`, `Optional`).
 - **Utilities:** Shared helper functions (e.g., for path manipulation, git checks) are located in `nano_gemini_cli_core/utils/`.
 - **Structured Output:** All tools must return a dictionary with two keys:
     - `llm_content`: The detailed, raw output for the agent to process.
